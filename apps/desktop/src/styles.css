@@ -1,0 +1,185 @@
+@import "tailwindcss";
+
+/*
+  Splitwire visual system — an illuminated route panel.
+  Two signal colors carry meaning everywhere:
+    lamp  (amber)  = goes through the tunnel
+    track (white)  = goes direct
+  Archivo's width axis carries hierarchy: expanded for identity,
+  normal for reading, condensed caps for panel engravings.
+*/
+
+@theme {
+  --font-sans: "Archivo Variable", "Segoe UI Variable Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Mono", ui-monospace, monospace;
+
+  --color-enamel: #0c1114;
+  --color-sunk: #090d0f;
+  --color-plate: #121a1e;
+  --color-plate-2: #182226;
+  --color-plate-3: #1f2a2f;
+  --color-rule: #222e34;
+  --color-rule-2: #2e3d44;
+  --color-ink: #e7ebe6;
+  --color-ink-2: #9ba6aa;
+  --color-ink-3: #67747a;
+  --color-ink-4: #45525a;
+  --color-lamp: #ffae34;
+  --color-lamp-2: #ffc46b;
+  --color-lamp-deep: #3a2a12;
+  --color-track: #cfd8dc;
+  --color-signal: #ff5b4d;
+  --color-signal-deep: #3a1916;
+  --color-go: #6fd3a5;
+
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-base: 13.5px;
+
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.1, 1);
+}
+
+@utility font-expanded {
+  font-stretch: 125%;
+}
+
+@utility font-semiexpanded {
+  font-stretch: 112%;
+}
+
+@utility font-condensed {
+  font-stretch: 75%;
+}
+
+/* Engraved panel label: condensed caps, generous tracking. */
+@utility engrave {
+  font-stretch: 72%;
+  font-weight: 650;
+  font-size: 10.5px;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    color-scheme: dark;
+    background: var(--color-enamel);
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--color-enamel);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    user-select: none;
+    cursor: default;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  textarea,
+  .selectable {
+    user-select: text;
+  }
+
+  button {
+    cursor: default;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-lamp) 35%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-lamp);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-ink-4);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-rule-2) transparent;
+  }
+}
+
+/* Route lamp animations. */
+@keyframes route-set {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0.18;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes lamp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.anim-route-set {
+  animation: route-set 0.9s steps(1, end) infinite;
+}
+
+.anim-lamp-pulse {
+  animation: lamp-pulse 1.1s ease-in-out infinite;
+}
+
+.anim-spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

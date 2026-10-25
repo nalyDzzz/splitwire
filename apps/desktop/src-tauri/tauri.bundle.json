@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "binaries/splitwire-service.exe": "engine/splitwire-service.exe",
+      "binaries/sing-box.exe": "engine/sing-box.exe",
+      "binaries/sing-box-LICENSE.txt": "engine/sing-box-LICENSE.txt"
+    }
+  }
+}

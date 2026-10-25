@@ -1,0 +1,24 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Engine binaries fetched or built by scripts/
+/vendor/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/gen/
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local

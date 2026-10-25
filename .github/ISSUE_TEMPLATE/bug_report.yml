@@ -1,0 +1,43 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Never paste private keys.** Remove `PrivateKey` / `PresharedKey` lines from any config you share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: routing
+    attributes:
+      label: Tunnel setup
+      description: App mode (all / selected), the apps involved, and whether the tunnel's AllowedIPs is 0.0.0.0/0. Screenshots of the Routing tab help.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: From the app's Logs view, or `%ProgramData%\Splitwire\logs`.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Splitwire version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+  - type: textarea
+    id: other
+    attributes:
+      label: Other VPN or network software installed
+      description: For example NordVPN, Tailscale, WireSock or a third-party firewall. These sometimes interfere.

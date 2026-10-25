@@ -1,0 +1,14 @@
+{
+  "name": "splitwire",
+  "private": true,
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "dev": "pnpm --filter splitwire-desktop tauri dev",
+    "dev:web": "pnpm --filter splitwire-desktop dev",
+    "service": "cargo run -p splitwire-service -- run",
+    "fetch:engine": "node scripts/fetch-sing-box.mjs",
+    "build": "node scripts/build.mjs",
+    "check": "cargo clippy --workspace --all-targets && pnpm --filter splitwire-desktop typecheck",
+    "test": "cargo test --workspace"
+  }
+}

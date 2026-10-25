@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/splitwire-core",
+    "crates/splitwire-service",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+rust-version = "1.85"
+repository = "https://github.com/nalyDzzz/splitwire"
+homepage = "https://github.com/nalyDzzz/splitwire"
+
+[workspace.dependencies]
+splitwire-core = { path = "crates/splitwire-core" }
+
+anyhow = "1"
+base64 = "0.22"
+getrandom = "0.3"
+ipnet = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
