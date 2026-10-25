@@ -3,6 +3,7 @@
 // (`pnpm dev:web`) it goes to an in-memory mock so the UI can be built
 // without Rust or admin rights.
 
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -18,6 +19,8 @@ import type {
   ServiceStatus,
   Settings,
   Tunnel,
+  UpdateInfo,
+  UpdateProgress,
 } from "./types";
 
 export interface Backend {
@@ -56,12 +59,27 @@ export interface Backend {
   /** Called once the UI has rendered; the backend then shows the window (unless launched to the tray). */
   frontendReady(): Promise<void>;
 
+  getAppVersion(): Promise<string>;
+  /** The update found by the last check (background or manual), without a network request. */
+  getAvailableUpdate(): Promise<UpdateInfo | null>;
+  /** Asks GitHub for a newer release. */
+  checkForUpdate(): Promise<UpdateInfo | null>;
+  /**
+   * Downloads the update, verifies its signature and runs the installer
+   * (Windows asks for permission). On success the app exits and relaunches
+   * itself, so the promise only settles on failure.
+   */
+  installUpdate(): Promise<void>;
+
   /** Pushed about once a second, and whenever something changes. */
   onServiceStatus(handler: (status: ServiceStatus) => void): Promise<UnlistenFn>;
   /** Tunnels changed outside the UI (e.g. from the tray). */
   onTunnelsChanged(handler: (tunnels: Tunnel[]) => void): Promise<UnlistenFn>;
   /** A .conf file was dropped on the window or opened with the app. */
   onImport(handler: (imported: ImportedTunnel) => void): Promise<UnlistenFn>;
+  /** A background check found a newer release. */
+  onUpdateAvailable(handler: (update: UpdateInfo) => void): Promise<UnlistenFn>;
+  onUpdateProgress(handler: (progress: UpdateProgress) => void): Promise<UnlistenFn>;
 }
 
 const tauriBackend: Backend = {
@@ -91,9 +109,16 @@ const tauriBackend: Backend = {
 
   frontendReady: () => invoke("frontend_ready"),
 
+  getAppVersion: () => getVersion(),
+  getAvailableUpdate: () => invoke("get_available_update"),
+  checkForUpdate: () => invoke("check_for_update"),
+  installUpdate: () => invoke("install_update"),
+
   onServiceStatus: (handler) => listen<ServiceStatus>("service-status", (e) => handler(e.payload)),
   onTunnelsChanged: (handler) => listen<Tunnel[]>("tunnels-changed", (e) => handler(e.payload)),
   onImport: (handler) => listen<ImportedTunnel>("import-tunnel", (e) => handler(e.payload)),
+  onUpdateAvailable: (handler) => listen<UpdateInfo>("update-available", (e) => handler(e.payload)),
+  onUpdateProgress: (handler) => listen<UpdateProgress>("update-progress", (e) => handler(e.payload)),
 };
 
 export const api: Backend = isTauri() ? tauriBackend : createMockBackend();

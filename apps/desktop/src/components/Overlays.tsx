@@ -9,6 +9,7 @@ import { AppPicker } from "./AppPicker";
 import { ImportDialog } from "./ImportDialog";
 import { NewTunnelDialog } from "./NewTunnelDialog";
 import { Button, Modal } from "./ui";
+import { UpdateDialog } from "./UpdateDialog";
 
 /** Every dialog and toast, mounted once. */
 export function Overlays() {
@@ -18,6 +19,7 @@ export function Overlays() {
       <NewTunnelDialog />
       <AppPicker />
       <DeleteDialog />
+      <UpdateDialog />
       <Toasts />
     </>
   );

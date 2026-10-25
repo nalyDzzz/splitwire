@@ -14,5 +14,6 @@ Please **don't open a public issue**. Use GitHub's private reporting instead: **
 - **Keys stay off disk.** Private keys reach sing-box over stdin, never in a file. Saved tunnels are encrypted with Windows DPAPI for the user's account.
 - **Engine API locked down.** sing-box's local stats API listens on a random localhost port with a random per-session secret.
 - **No orphaned engine.** sing-box runs inside a kill-on-close job object, so it can't outlive the service.
+- **Signed updates.** In-app updates are checked against the public key built into the app before the installer runs. Signatures are bound to their version, so a manifest can't pair a new version number with an old (or different) installer.
 
 Anything that breaks one of these is a vulnerability worth reporting.

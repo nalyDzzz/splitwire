@@ -11,9 +11,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "apps", "desktop");
 const staging = join(desktop, "src-tauri", "binaries");
 
+// Arguments are fixed strings without spaces, so joining them for the shell
+// (needed to run pnpm.cmd on Windows) is safe.
 function run(command, args, cwd = root) {
-  console.log(`\n> ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", shell: process.platform === "win32" });
+  const line = [command, ...args].join(" ");
+  console.log(`\n> ${line}`);
+  const result = spawnSync(line, { cwd, stdio: "inherit", shell: true });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 

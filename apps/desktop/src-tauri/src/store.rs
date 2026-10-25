@@ -12,6 +12,8 @@ use splitwire_core::model::Tunnel;
 
 const TUNNELS_FILE: &str = "tunnels.dat";
 const SETTINGS_FILE: &str = "settings.json";
+/// Written right before an update installs; holds the tunnel to reconnect.
+const RESUME_FILE: &str = "resume-after-update.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -20,12 +22,29 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub connect_on_launch: bool,
     pub last_tunnel_id: Option<String>,
+    /// Check GitHub for new releases in the background.
+    pub auto_check_updates: bool,
+    /// Probe the tunnel by fetching a test page through it.
+    pub health_check: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { close_to_tray: true, launch_at_login: false, connect_on_launch: false, last_tunnel_id: None }
+        Self {
+            close_to_tray: true,
+            launch_at_login: false,
+            connect_on_launch: false,
+            last_tunnel_id: None,
+            auto_check_updates: true,
+            health_check: true,
+        }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Resume {
+    tunnel_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -89,6 +108,20 @@ impl Store {
 
     pub fn save_settings(&self) -> anyhow::Result<()> {
         write_atomic(&self.dir.join(SETTINGS_FILE), &serde_json::to_vec_pretty(&self.settings)?)
+    }
+
+    /// Remembers a tunnel to reconnect once the updated app starts.
+    pub fn set_resume(&self, tunnel_id: &str) -> anyhow::Result<()> {
+        let resume = Resume { tunnel_id: tunnel_id.to_string() };
+        write_atomic(&self.dir.join(RESUME_FILE), &serde_json::to_vec(&resume)?)
+    }
+
+    /// The tunnel to reconnect after an update, if any. Reading clears it.
+    pub fn take_resume(&self) -> Option<String> {
+        let path = self.dir.join(RESUME_FILE);
+        let bytes = fs::read(&path).ok()?;
+        let _ = fs::remove_file(&path);
+        serde_json::from_slice::<Resume>(&bytes).ok().map(|r| r.tunnel_id)
     }
 }
 
@@ -172,6 +205,20 @@ mod tests {
 
         let reloaded = Store::load(dir.clone()).unwrap();
         assert_eq!(reloaded.tunnels, vec![tunnel]);
+
+        // The resume marker is read once.
+        assert_eq!(reloaded.take_resume(), None);
+        reloaded.set_resume("abc").unwrap();
+        assert_eq!(reloaded.take_resume().as_deref(), Some("abc"));
+        assert_eq!(reloaded.take_resume(), None);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_settings_files_get_new_defaults() {
+        let settings: Settings = serde_json::from_str(r#"{"closeToTray":false}"#).unwrap();
+        assert!(!settings.close_to_tray);
+        assert!(settings.auto_check_updates);
+        assert!(settings.health_check);
     }
 }

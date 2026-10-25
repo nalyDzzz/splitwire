@@ -9,12 +9,13 @@ mod processes;
 mod service_client;
 mod store;
 mod tray;
+mod updater;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use splitwire_core::ipc::{ConnectionState, Request};
+use splitwire_core::ipc::{ConnectOptions, ConnectionState, Request};
 use tauri::{AppHandle, DragDropEvent, Emitter, Manager, WindowEvent};
 use tokio::sync::Notify;
 
@@ -47,14 +48,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main_window(app)))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
         ))
+        .manage(updater::UpdateState::default())
         .setup(move |app| {
             let dir = app.path().app_local_data_dir()?;
             let store = Store::load(dir).map_err(|e| format!("{e:#}"))?;
-            let connect_on_launch = store.settings.connect_on_launch.then(|| store.settings.last_tunnel_id.clone()).flatten();
+            // Reconnect what an update interrupted, else honour connect-on-launch.
+            let connect_on_launch = store
+                .take_resume()
+                .or_else(|| store.settings.connect_on_launch.then(|| store.settings.last_tunnel_id.clone()).flatten());
             app.manage(AppState {
                 store: Mutex::new(store),
                 icons: IconCache::default(),
@@ -69,6 +75,7 @@ pub fn run() {
             *app.state::<AppState>().tray.lock().unwrap() = Some(tray);
 
             tauri::async_runtime::spawn(poll_status(app.handle().clone()));
+            tauri::async_runtime::spawn(updater::check_periodically(app.handle().clone()));
             if !started_hidden {
                 // The window starts hidden and the UI shows it once rendered
                 // (`frontend_ready`). Don't stay invisible if that never comes.
@@ -130,6 +137,9 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::frontend_ready,
+            updater::check_for_update,
+            updater::get_available_update,
+            updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Splitwire");
@@ -164,18 +174,18 @@ pub(crate) fn refresh(app: &AppHandle) {
 }
 
 pub(crate) async fn connect_tunnel(app: &AppHandle, state: &AppState, tunnel_id: &str) -> Result<(), CommandError> {
-    let tunnel = {
+    let (tunnel, options) = {
         let mut store = state.store.lock().unwrap();
         let tunnel = store.tunnel(tunnel_id).cloned().ok_or_else(|| CommandError::Other { message: "Tunnel not found".into() })?;
         if store.settings.last_tunnel_id.as_deref() != Some(tunnel_id) {
             store.settings.last_tunnel_id = Some(tunnel_id.to_string());
             store.save_settings()?;
         }
-        tunnel
+        (tunnel, ConnectOptions { health_check: store.settings.health_check })
     };
     tunnel.validate().map_err(|errors| CommandError::Validation { errors })?;
     refresh(app);
-    let result = service_client::request(Request::Connect { tunnel: Box::new(tunnel) }).await;
+    let result = service_client::request(Request::Connect { tunnel: Box::new(tunnel), options }).await;
     refresh(app);
     result?;
     Ok(())

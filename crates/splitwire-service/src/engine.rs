@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context};
 use splitwire_core::consts::TUN_INTERFACE_NAME;
 use splitwire_core::ipc::{
-    ConnectionState, Connection, EngineStatus, Health, LogEntry, LogLevel, LogSource, Route, RouteTraffic, Traffic,
+    ConnectOptions, ConnectionState, Connection, EngineStatus, Health, LogEntry, LogLevel, LogSource, Route,
+    RouteTraffic, Traffic,
 };
 use splitwire_core::model::Tunnel;
 use splitwire_core::now_ms;
@@ -103,7 +104,7 @@ impl Engine {
         self.logs.since(after)
     }
 
-    pub async fn connect(&self, tunnel: Tunnel) -> Result<(), String> {
+    pub async fn connect(&self, tunnel: Tunnel, options: ConnectOptions) -> Result<(), String> {
         if let Err(errors) = tunnel.validate() {
             let message = errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ");
             return Err(format!("Invalid tunnel: {message}"));
@@ -129,10 +130,10 @@ impl Engine {
         });
         self.logs.info(format!("Connecting \"{}\" ({})", tunnel.name, tunnel.peer.endpoint));
 
-        match self.start(&tunnel, generation).await {
+        let probe = options.health_check && probes_internet(&tunnel);
+        match self.start(&tunnel, generation, probe).await {
             Ok(running) => {
                 *control = Some(running);
-                let probe = probes_internet(&tunnel);
                 self.set_status(|s| {
                     s.state = ConnectionState::Connected;
                     s.connected_at = Some(now_ms());
@@ -171,7 +172,7 @@ impl Engine {
         self.logs.info("Disconnected");
     }
 
-    async fn start(&self, tunnel: &Tunnel, generation: u64) -> anyhow::Result<Running> {
+    async fn start(&self, tunnel: &Tunnel, generation: u64, probe: bool) -> anyhow::Result<Running> {
         let api_listen = free_local_port().context("no free local port for the engine API")?;
         let api_secret = random_hex(16);
         // Checked before the engine starts: once its adapter is up, every
@@ -264,7 +265,7 @@ impl Engine {
             Ok(Ok(())) => {
                 let api = ClashApi::new(api_listen, &api_secret);
                 running.tasks.push(tokio::spawn(poll_stats(api, self.shared.clone(), running.exited.clone(), generation)));
-                if probes_internet(tunnel) {
+                if probe {
                     let api = ClashApi::new(api_listen, &api_secret);
                     running.tasks.push(tokio::spawn(poll_health(
                         api,

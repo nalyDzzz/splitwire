@@ -16,7 +16,11 @@ pub enum Request {
     Hello,
     GetStatus,
     /// Starts the tunnel, replacing any running one.
-    Connect { tunnel: Box<Tunnel> },
+    Connect {
+        tunnel: Box<Tunnel>,
+        #[serde(default)]
+        options: ConnectOptions,
+    },
     Disconnect,
     GetConnections,
     /// Log entries with `seq` greater than `after`.
@@ -36,6 +40,19 @@ pub enum Response {
     Logs { entries: Vec<LogEntry> },
     Ok,
     Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConnectOptions {
+    /// Periodically fetch a test page through the tunnel (see [`Health`]).
+    pub health_check: bool,
+}
+
+impl Default for ConnectOptions {
+    fn default() -> Self {
+        Self { health_check: true }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +107,8 @@ pub enum Health {
     /// Requests through the tunnel are failing (no handshake, server down,
     /// or the server doesn't forward traffic).
     Failing { message: String },
-    /// The tunnel only carries some networks, so there's nothing to probe.
+    /// Not probed: the check is turned off, or the tunnel only carries some
+    /// networks so a public test page proves nothing.
     Unsupported,
 }
 
@@ -191,5 +209,14 @@ mod tests {
 
         let parsed: Request = serde_json::from_str("{\"type\":\"disconnect\"}").unwrap();
         assert!(matches!(parsed, Request::Disconnect));
+    }
+
+    #[test]
+    fn connect_options_default_to_health_check_on() {
+        assert!(ConnectOptions::default().health_check);
+        let parsed: ConnectOptions = serde_json::from_str("{}").unwrap();
+        assert!(parsed.health_check);
+        let parsed: ConnectOptions = serde_json::from_str("{\"healthCheck\":false}").unwrap();
+        assert!(!parsed.health_check);
     }
 }

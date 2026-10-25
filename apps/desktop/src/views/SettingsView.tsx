@@ -1,4 +1,4 @@
-import { ShieldAlert } from "lucide-react";
+import { CircleArrowUp, RefreshCw, ShieldAlert } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Mark } from "@/components/Mark";
@@ -39,6 +39,21 @@ export function SettingsView() {
           >
             <Switch label="Connect when Splitwire starts" checked={!!settings?.connectOnLaunch} onChange={toggle("connectOnLaunch")} disabled={!settings} />
           </Row>
+        </Group>
+
+        <UpdatesGroup />
+
+        <Group title="Privacy">
+          <Row
+            title="Tunnel health check"
+            detail="Every 30 seconds, fetches a tiny test page from Cloudflare (cp.cloudflare.com) through the tunnel to confirm traffic gets through. Applies the next time you connect."
+          >
+            <Switch label="Tunnel health check" checked={!!settings?.healthCheck} onChange={toggle("healthCheck")} disabled={!settings} />
+          </Row>
+          <p className="px-4 py-3.5 text-xs text-ink-3">
+            Splitwire doesn't collect or send anything about you. Its only requests of its own are the health check
+            and update checks (to GitHub), and both can be turned off.
+          </p>
         </Group>
 
         <Group title="Background service">
@@ -108,6 +123,52 @@ export function SettingsView() {
         </Group>
       </div>
     </div>
+  );
+}
+
+function UpdatesGroup() {
+  const settings = useStore((s) => s.settings);
+  const updateSettings = useStore((s) => s.updateSettings);
+  const appVersion = useStore((s) => s.appVersion);
+  const update = useStore((s) => s.update);
+  const phase = useStore((s) => s.updatePhase);
+  const error = useStore((s) => s.updateError);
+  const checkForUpdate = useStore((s) => s.checkForUpdate);
+  const openDialog = useStore((s) => s.openDialog);
+
+  const detail =
+    phase === "checking"
+      ? "Checking GitHub for a newer release…"
+      : update
+        ? `Version ${update.version} is ready to install.`
+        : phase === "upToDate"
+          ? "You're on the latest version."
+          : phase === "error"
+            ? error
+            : "Updates download from GitHub Releases and are verified before they install.";
+
+  return (
+    <Group title="Updates">
+      <Row title={`Splitwire ${appVersion ?? ""}`.trim()} detail={detail}>
+        {update ? (
+          <Button variant="primary" onClick={() => openDialog({ kind: "update" })} icon={<CircleArrowUp size={14} />}>
+            Update to {update.version}
+          </Button>
+        ) : (
+          <Button onClick={checkForUpdate} disabled={phase === "checking"} icon={phase === "checking" ? <Spinner /> : <RefreshCw size={13} />}>
+            Check for updates
+          </Button>
+        )}
+      </Row>
+      <Row title="Check for updates automatically" detail="Looks for a new release a little after Splitwire starts, then every few hours.">
+        <Switch
+          label="Check for updates automatically"
+          checked={!!settings?.autoCheckUpdates}
+          onChange={(value) => void updateSettings({ autoCheckUpdates: value })}
+          disabled={!settings}
+        />
+      </Row>
+    </Group>
   );
 }
 

@@ -25,6 +25,7 @@ URL switches:
 - `?empty` starts with no tunnels.
 - `?connect=work` connects on load.
 - `?health=failing` shows a tunnel that's up but passing no traffic.
+- `?update` offers a newer release; `?update=fail` makes installing it fail.
 - Connecting to `lab` always fails, so you can see the error state.
 
 ### Running the real thing
@@ -64,8 +65,43 @@ CI runs the same checks. If you change how the engine config is generated, add a
 
 1. Run `node scripts/bump-version.mjs 0.2.0`, then `cargo check` to refresh `Cargo.lock`.
 2. Commit, then `git tag v0.2.0 && git push && git push --tags`.
-3. The **Release** workflow builds the installer and publishes it with checksums and generated notes.
-   - Tags with a suffix (`v0.2.0-beta.1`) are published as prereleases.
+3. The **Release** workflow:
+   - builds the installer;
+   - signs it for the in-app updater;
+   - writes `latest.json`;
+   - publishes everything with checksums and generated notes.
+
+   Tags with a suffix (`v0.2.0-beta.1`) are published as prereleases. Prereleases aren't offered as in-app updates, because the app reads `releases/latest/download/latest.json`.
+
+### The update signing key
+
+In-app updates are verified against the public key in `apps/desktop/src-tauri/tauri.conf.json` (`plugins.updater.pubkey`).
+
+The matching private key lives in the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep an offline backup of both, for example in a password manager. If the key is lost, existing installs can't be updated in-app any more; users would have to reinstall by hand.
+
+### Testing updates locally
+
+Build a debug app that points at a local manifest and stops after verifying the download:
+
+```powershell
+$env:SPLITWIRE_UPDATE_ENDPOINT = "http://127.0.0.1:8787/latest.json"
+$env:SPLITWIRE_UPDATE_DRY_RUN = "1"   # download + verify, but don't install
+pnpm --filter splitwire-desktop tauri dev --config dev-updater.json
+```
+
+`dev-updater.json` needs these settings:
+
+```json
+{
+  "identifier": "dev.splitwire.updatertest",
+  "plugins": { "updater": { "dangerousInsecureTransportProtocol": true } }
+}
+```
+
+- The separate identifier lets it run next to an installed copy.
+- `dangerousInsecureTransportProtocol` allows plain HTTP.
+
+Make the manifest with `tauri signer sign --app-version <v>` and `scripts/updater-manifest.mjs`, then serve its folder over HTTP.
 
 ## Upgrading sing-box
 

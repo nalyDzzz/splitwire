@@ -5,6 +5,7 @@
 //   ?empty                                       start with no tunnels
 //   ?connect=<tunnel name>                       connect to a tunnel on load
 //   ?health=failing                              connected, but nothing gets through
+//   ?update[=fail]                               a newer release is available (installing it fails)
 // The tunnel named "lab" always fails to connect, to show the failed state.
 // `window.splitwireMock.dropConf()` simulates dropping a .conf on the window.
 
@@ -25,6 +26,8 @@ import type {
   ServiceStatus,
   Settings,
   Tunnel,
+  UpdateInfo,
+  UpdateProgress,
   ValidationError,
 } from "./types";
 
@@ -346,7 +349,28 @@ function sampleConf(): string {
 
 export function createMockBackend(): Backend {
   let tunnels: Tunnel[] = params.has("empty") ? [] : clone(SEED);
-  let settings: Settings = { closeToTray: true, launchAtLogin: false, connectOnLaunch: false, lastTunnelId: "t-work" };
+  let settings: Settings = {
+    closeToTray: true,
+    launchAtLogin: false,
+    connectOnLaunch: false,
+    lastTunnelId: "t-work",
+    autoCheckUpdates: true,
+    healthCheck: true,
+  };
+  const VERSION = "0.2.0";
+  // `?update` pretends a newer release is out; `?update=fail` makes installing it fail.
+  const mockUpdate: UpdateInfo | null = params.has("update")
+    ? {
+        version: "0.3.0",
+        currentVersion: VERSION,
+        notes:
+          "## What's Changed\n* Kill switch: block tunneled apps when the tunnel drops\n* Faster app picker with search by description\n* Fix tray icon not updating after sleep\n\n**Full Changelog**: https://github.com/nalyDzzz/splitwire/compare/v0.2.0...v0.3.0",
+        date: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      }
+    : null;
+  let foundUpdate: UpdateInfo | null = null;
+  const updateHandlers = new Set<(u: UpdateInfo) => void>();
+  const progressHandlers = new Set<(p: UpdateProgress) => void>();
   let service = (params.get("service") ?? "running") as "running" | "notInstalled" | "stopped" | "unreachable";
   let engine: EngineStatus = clone(DISCONNECTED);
   let connections: Connection[] = [];
@@ -365,7 +389,7 @@ export function createMockBackend(): Backend {
   const status = (): ServiceStatus => {
     switch (service) {
       case "running":
-        return { kind: "running", serviceVersion: "0.1.0", engineVersion: "1.14.4", status: clone(engine) };
+        return { kind: "running", serviceVersion: VERSION, engineVersion: "1.14.4", status: clone(engine) };
       case "unreachable":
         return { kind: "unreachable", message: "The pipe \\\\.\\pipe\\splitwire-service didn't answer within 5 seconds." };
       default:
@@ -578,6 +602,34 @@ export function createMockBackend(): Backend {
 
     async frontendReady() {},
 
+    async getAppVersion() {
+      return VERSION;
+    },
+    async getAvailableUpdate() {
+      return clone(foundUpdate);
+    },
+    async checkForUpdate() {
+      await sleep(900);
+      foundUpdate = mockUpdate;
+      return clone(foundUpdate);
+    },
+    async installUpdate() {
+      if (!foundUpdate) throw { kind: "other", message: "Splitwire is already up to date" } satisfies CommandError;
+      const total = 22_180_000;
+      for (let downloaded = 0; downloaded < total; downloaded += 1_400_000) {
+        progressHandlers.forEach((h) => h({ downloaded, total }));
+        await sleep(120);
+      }
+      progressHandlers.forEach((h) => h({ downloaded: total, total }));
+      await sleep(400);
+      if (params.get("update") === "fail") {
+        throw { kind: "other", message: "Couldn't install the update: The administrator prompt was cancelled" } satisfies CommandError;
+      }
+      // The real app exits here and the installer relaunches it.
+      await sleep(1500);
+      location.reload();
+    },
+
     async onServiceStatus(handler) {
       statusHandlers.add(handler);
       return () => statusHandlers.delete(handler);
@@ -590,7 +642,23 @@ export function createMockBackend(): Backend {
       importHandlers.add(handler);
       return () => importHandlers.delete(handler);
     },
+    async onUpdateAvailable(handler) {
+      updateHandlers.add(handler);
+      return () => updateHandlers.delete(handler);
+    },
+    async onUpdateProgress(handler) {
+      progressHandlers.add(handler);
+      return () => progressHandlers.delete(handler);
+    },
   };
+
+  // Like the real background check, a little after startup.
+  if (mockUpdate) {
+    setTimeout(() => {
+      foundUpdate = mockUpdate;
+      updateHandlers.forEach((h) => h(clone(mockUpdate)));
+    }, 1500);
+  }
 
   const autoConnect = params.get("connect");
   if (autoConnect) {

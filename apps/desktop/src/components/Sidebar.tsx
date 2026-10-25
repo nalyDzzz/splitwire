@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { AnimatePresence, motion } from "motion/react";
-import { ClipboardPaste, FileUp, Plus, ScrollText, Settings2, Sparkles } from "lucide-react";
+import { CircleArrowUp, ClipboardPaste, FileUp, Plus, ScrollText, Settings2, Sparkles } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { api, errorMessage } from "@/lib/api";
@@ -76,6 +76,7 @@ export function Sidebar() {
       </nav>
 
       <div className="flex flex-col gap-0.5 border-t border-rule/70 px-2 py-2">
+        <UpdateChip />
         <NavItem
           icon={<ScrollText size={15} strokeWidth={1.75} />}
           label="Logs"
@@ -91,6 +92,38 @@ export function Sidebar() {
         <ServiceHealth service={service} onClick={() => setView("settings")} />
       </div>
     </aside>
+  );
+}
+
+/** Shown once a newer release is out; opens the update dialog. */
+function UpdateChip() {
+  const update = useStore((s) => s.update);
+  const phase = useStore((s) => s.updatePhase);
+  const openDialog = useStore((s) => s.openDialog);
+  const working = phase === "downloading" || phase === "installing";
+
+  return (
+    <AnimatePresence initial={false}>
+      {update && (
+        <motion.button
+          type="button"
+          onClick={() => openDialog({ kind: "update" })}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 6 }}
+          transition={{ duration: 0.2 }}
+          className="group mb-1 flex h-[46px] shrink-0 items-center gap-2.5 rounded-lg border border-lamp/30 bg-lamp-deep/60 px-2.5 text-left transition-colors hover:border-lamp/55 hover:bg-lamp-deep"
+        >
+          <CircleArrowUp size={15} strokeWidth={1.9} className={clsx("shrink-0 text-lamp", working && "animate-pulse")} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] leading-tight font-medium text-lamp-2">
+              {working ? "Updating…" : "Update available"}
+            </span>
+            <span className="block font-mono text-2xs text-lamp/70">v{update.version}</span>
+          </span>
+        </motion.button>
+      )}
+    </AnimatePresence>
   );
 }
 

@@ -81,7 +81,7 @@ async fn dispatch(request: Request, engine: &Engine) -> Response {
             engine_version: engine.engine_version().map(str::to_string),
         },
         Request::GetStatus => Response::Status { status: engine.status() },
-        Request::Connect { tunnel } => match engine.connect(*tunnel).await {
+        Request::Connect { tunnel, options } => match engine.connect(*tunnel, options).await {
             Ok(()) => Response::Ok,
             Err(message) => Response::Error { message },
         },

@@ -108,7 +108,8 @@ export interface EngineStatus {
 
 /**
  * Result of periodically fetching a test URL through the tunnel.
- * "unsupported": the tunnel only carries some networks, so there's nothing to probe.
+ * "unsupported": not probed (turned off in settings, or the tunnel only
+ * carries some networks so a public test page proves nothing).
  */
 export type Health =
   | { state: "unknown" }
@@ -205,6 +206,25 @@ export interface Settings {
   /** Connect to lastTunnelId when the app starts. */
   connectOnLaunch: boolean;
   lastTunnelId: string | null;
+  /** Check GitHub for new releases in the background. */
+  autoCheckUpdates: boolean;
+  /** Fetch a test page through the tunnel every 30 s (applies on next connect). */
+  healthCheck: boolean;
+}
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  /** Release notes, Markdown. */
+  notes: string | null;
+  /** RFC 3339. */
+  date: string | null;
+}
+
+export interface UpdateProgress {
+  /** Bytes so far. */
+  downloaded: number;
+  total: number | null;
 }
 
 /** Shape of a rejected command promise. */

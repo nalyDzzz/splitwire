@@ -35,6 +35,7 @@ It's free and open source, a replacement for tools like TunnlTo.
   - A health check that proves traffic actually gets through the tunnel, not just that it's "connected".
 - **Imports your existing configs.** Standard WireGuard `.conf` files, plus TunnlTo/WireSock `AllowedApps`, `DisallowedApps` and `DisallowedIPs`.
 - **Lives in the tray.** Connect, disconnect, launch at login, and auto-connect.
+- **Updates itself.** When a new release is out, an update button appears; one click installs it and reconnects your tunnel. Updates are signed and verified before they run.
 - **Secure by design.** The app runs without admin rights; a small background service does the privileged work. Saved tunnels are encrypted with Windows DPAPI. See [SECURITY.md](SECURITY.md).
 
 <p align="center">
@@ -94,6 +95,24 @@ Bypass always wins. If the tunnel has no IPv6 address, tunneled apps' IPv6 traff
 - **Other VPN clients.** Keep other VPNs disconnected while Splitwire is connected. Having them installed is fine.
 - **The tray icon matters.** Quitting Splitwire disconnects the tunnel, so nothing keeps routing your traffic without you seeing it.
 
+## Privacy
+
+Splitwire has no telemetry and collects nothing about you. Apart from your own tunnel traffic, it makes only two kinds of network request, and you can turn both off:
+
+| What | Where | When | Turn off |
+|---|---|---|---|
+| Update check | `github.com` (this repo's releases) | Shortly after start, then every few hours | Settings → Updates |
+| Tunnel health check | `cp.cloudflare.com`, through your tunnel | Every 30 s while connected | Settings → Privacy |
+
+The bundled sing-box engine runs locally, and its control API only listens on your own machine.
+
+## Code signing policy
+
+- **Built from source.** Every release installer is built by [GitHub Actions](.github/workflows/release.yml) from this repository's source, with a pinned, checksum-verified sing-box.
+- **Not Authenticode-signed yet.** The installers have no Windows publisher signature, so SmartScreen warns.
+- **Signed updates.** In-app updates are signed with the project's update key and verified against the public key built into the app. Each signature is bound to its version, so a tampered or replayed release is refused.
+- **Team:** [@nalyDzzz](https://github.com/nalyDzzz) is the committer, reviewer and release approver.
+
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
@@ -113,7 +132,7 @@ pnpm build       # the installer
 - Several tunnels at once, each with its own apps
 - Kill switch: block tunneled apps when the tunnel drops
 - Split DNS for chosen domains
-- Signed installer and auto-update
+- Signed installer (no more SmartScreen warning)
 - A slimmer engine build (the stock sing-box is ~80 MB unpacked)
 
 ## License

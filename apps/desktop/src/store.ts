@@ -9,6 +9,8 @@ import type {
   ServiceStatus,
   Settings,
   Tunnel,
+  UpdateInfo,
+  UpdateProgress,
   ValidationError,
 } from "./lib/types";
 
@@ -27,7 +29,11 @@ export type Dialog =
   | { kind: "newTunnel" }
   | { kind: "picker"; target: "apps" | "bypassApps" }
   | { kind: "deleteTunnel"; id: string }
+  | { kind: "update" }
   | null;
+
+/** Where an update stands. "installing": the installer is starting and the app is about to exit. */
+export type UpdatePhase = "idle" | "checking" | "upToDate" | "downloading" | "installing" | "error";
 
 export interface Toast {
   id: number;
@@ -57,6 +63,12 @@ interface State {
   dialog: Dialog;
   toasts: Toast[];
   busy: boolean;
+  appVersion: string | null;
+  /** A newer release, once a check has found one. */
+  update: UpdateInfo | null;
+  updatePhase: UpdatePhase;
+  updateProgress: UpdateProgress | null;
+  updateError: string | null;
 
   init(): Promise<void>;
   select(id: string): void;
@@ -74,6 +86,8 @@ interface State {
   requestIcons(paths: (string | null | undefined)[]): void;
   updateSettings(patch: Partial<Settings>): Promise<void>;
   installService(): Promise<void>;
+  checkForUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
 }
 
 export function engineOf(service: ServiceStatus | null): EngineStatus | null {
@@ -105,6 +119,11 @@ export const useStore = create<State>((set, get) => ({
   dialog: null,
   toasts: [],
   busy: false,
+  appVersion: null,
+  update: null,
+  updatePhase: "idle",
+  updateProgress: null,
+  updateError: null,
 
   init() {
     // StrictMode mounts twice in development; only load and subscribe once.
@@ -129,7 +148,17 @@ export const useStore = create<State>((set, get) => ({
       await api.onServiceStatus((next) => applyStatus(next));
       await api.onTunnelsChanged((next) => set({ tunnels: next }));
       await api.onImport((imported) => set({ dialog: { kind: "import", imported, mode: "file" } }));
+      await api.onUpdateAvailable((update) => set({ update }));
+      await api.onUpdateProgress((progress) =>
+        set({
+          updateProgress: progress,
+          updatePhase: progress.total !== null && progress.downloaded >= progress.total ? "installing" : "downloading",
+        }),
+      );
       void get().refreshProcesses();
+      void Promise.all([api.getAppVersion(), api.getAvailableUpdate()]).then(([appVersion, update]) =>
+        set((s) => ({ appVersion, update: s.update ?? update })),
+      );
     })();
     return initialized;
   },
@@ -318,6 +347,28 @@ export const useStore = create<State>((set, get) => ({
       get().toast(`Couldn't install the service: ${errorMessage(error)}`, "error");
     } finally {
       set({ busy: false });
+    }
+  },
+
+  async checkForUpdate() {
+    set({ updatePhase: "checking", updateError: null });
+    try {
+      const update = await api.checkForUpdate();
+      set({ update, updatePhase: update ? "idle" : "upToDate" });
+    } catch (error) {
+      set({ updatePhase: "error", updateError: errorMessage(error) });
+    }
+  },
+
+  async installUpdate() {
+    set({ updatePhase: "downloading", updateProgress: null, updateError: null });
+    try {
+      await api.installUpdate();
+      // Only reached in a dry run; a real install exits the app.
+      set({ updatePhase: "idle", updateProgress: null });
+      get().toast("Update downloaded and verified (dry run, not installed)");
+    } catch (error) {
+      set({ updatePhase: "error", updateProgress: null, updateError: errorMessage(error) });
     }
   },
 }));
