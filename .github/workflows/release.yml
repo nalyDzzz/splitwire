@@ -17,6 +17,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags and history, for the release notes
 
       - name: Check the tag matches the app version
         shell: bash
@@ -71,7 +73,20 @@ jobs:
       - name: Write release notes and the updater manifest
         shell: bash
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body > changes.md
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body > generated.md
+          # GitHub only lists merged pull requests; fall back to commit subjects
+          # when changes were pushed directly.
+          if grep -q "^## What's Changed" generated.md; then
+            cp generated.md changes.md
+          else
+            previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+            {
+              echo "## What's Changed"
+              git log --no-merges --pretty='* %s' "${previous:+$previous..}$GITHUB_REF_NAME" | grep -v '^\* Release v' || true
+              echo
+              cat generated.md
+            } > changes.md
+          fi
           node scripts/updater-manifest.mjs \
             --version "$VERSION" \
             --installer "release/$INSTALLER" \
