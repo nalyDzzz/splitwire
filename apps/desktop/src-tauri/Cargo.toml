@@ -29,7 +29,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-png = "0.17"
+png = "0.18"
 time = { version = "0.3", features = ["formatting"] }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
@@ -39,7 +39,7 @@ tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_Security",
