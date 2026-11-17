@@ -32,6 +32,9 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 const STATS_INTERVAL: Duration = Duration::from_secs(1);
 const READY_MARKER: &str = "sing-box started";
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Lookup timeout when an earlier address can stand in, so a DNS outage
+/// barely delays a reconnect.
+const RELOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Fetched through the tunnel to prove traffic gets through. Returns an
 /// empty 204, the same check browsers use for captive portals.
@@ -128,9 +131,9 @@ struct Session {
 }
 
 impl Session {
-    fn spawn(core: Arc<Core>, tunnel: Tunnel, probe: bool, peer: PeerAddress, running: Running) -> Self {
+    fn spawn(core: Arc<Core>, tunnel: Tunnel, probe: bool, peer: PeerAddress, running: Running, host_ipv6: bool) -> Self {
         let (cancel, cancelled) = watch::channel(false);
-        let task = tokio::spawn(supervise(core, tunnel, probe, peer, running, cancelled));
+        let task = tokio::spawn(supervise(core, tunnel, probe, peer, running, host_ipv6, cancelled));
         Self { cancel, task }
     }
 
@@ -216,16 +219,17 @@ impl Engine {
         core.logs.info(format!("Connecting \"{}\" ({})", tunnel.name, tunnel.peer.endpoint));
 
         let probe = options.health_check && probes_internet(&tunnel);
+        let host_ipv6 = host_has_ipv6();
         let mut peer = PeerAddress::new(&tunnel)?;
         let started = match peer.resolve(true, &core.logs).await {
-            Ok(address) => core.start(&tunnel, EngineMode::Tunnel, Some(address), probe).await,
+            Ok(address) => core.start(&tunnel, EngineMode::Tunnel, Some(address), host_ipv6, probe).await,
             Err(message) => Err(anyhow!(message)),
         };
         match started {
             Ok(running) => {
                 core.set_connected(probe, Some(now_ms()));
                 core.logs.info(format!("Connected \"{}\"", tunnel.name));
-                *control = Some(Session::spawn(self.core.clone(), tunnel, probe, peer, running));
+                *control = Some(Session::spawn(self.core.clone(), tunnel, probe, peer, running, host_ipv6));
                 Ok(())
             }
             Err(error) => {
@@ -265,10 +269,17 @@ async fn supervise(
     probe: bool,
     mut peer: PeerAddress,
     mut running: Running,
+    // Whether this machine has IPv6 outside the tunnel. Only re-checked
+    // while nothing runs or blocks: the block would hide IPv6 from the
+    // check, and an engine's adapter would skew it.
+    mut host_ipv6: bool,
     mut cancel: watch::Receiver<bool>,
 ) {
     let kill_switch = tunnel.routing.kill_switch;
     let mut failures = 0u32;
+    // Whether `running` came from a reconnect. The first drop of a session is
+    // always restarted at once; drops soon after a reconnect back off.
+    let mut reconnected = false;
     loop {
         // Up: wait for the engine to stop on its own, or for the session to end.
         let mut exited = running.exited.clone();
@@ -284,7 +295,8 @@ async fn supervise(
         // connection an app makes would go out directly.
         let mut hold = if kill_switch { core.block_all() } else { None };
         let mut last_error = core.exit_reason(&running);
-        failures = if running.started.elapsed() >= core.retry.stable_uptime { 0 } else { failures + 1 };
+        let stable = running.started.elapsed() >= core.retry.stable_uptime;
+        failures = if stable || !reconnected { 0 } else { failures + 1 };
         core.stop(running).await;
         core.logs.error(format!("Tunnel dropped: {last_error}"));
         if hold.is_some() {
@@ -299,7 +311,7 @@ async fn supervise(
             let delay = core.retry.delay(failures);
             if !delay.is_zero() {
                 if kill_switch && fallback.is_none() && delay >= core.retry.blocked_engine_after {
-                    match core.start(&tunnel, EngineMode::Blocked, None, false).await {
+                    match core.start(&tunnel, EngineMode::Blocked, None, host_ipv6, false).await {
                         Ok(engine) => {
                             fallback = Some(engine);
                             if hold.take().is_some() {
@@ -354,11 +366,15 @@ async fn supervise(
             }
             core.set_reconnecting(&last_error, failures, None, blocking(&hold, &fallback));
 
-            // While everything is blocked, a lookup could only time out.
+            // While everything is blocked, a lookup could only time out, and
+            // the IPv6 check would come back negative.
             let lookup = hold.is_none();
+            if lookup {
+                host_ipv6 = host_has_ipv6();
+            }
             let attempt = async {
                 let address = peer.resolve(lookup, &core.logs).await.map_err(|message| anyhow!(message))?;
-                core.start(&tunnel, EngineMode::Tunnel, Some(address), probe).await
+                core.start(&tunnel, EngineMode::Tunnel, Some(address), host_ipv6, probe).await
             };
             tokio::select! {
                 result = attempt => match result {
@@ -376,6 +392,7 @@ async fn supervise(
         // The new engine routes or blocks from here.
         drop(hold);
         running = restarted;
+        reconnected = true;
         core.set_connected(probe, None);
         core.logs.info(format!("Reconnected \"{}\"", tunnel.name));
     }
@@ -406,15 +423,22 @@ fn describe(delay: Duration) -> String {
 }
 
 impl Core {
-    async fn start(&self, tunnel: &Tunnel, mode: EngineMode, peer_address: Option<IpAddr>, probe: bool) -> anyhow::Result<Running> {
+    /// `host_ipv6`: from [`host_has_ipv6`], checked by the caller while no
+    /// engine is up (its adapter makes every address look routable) and
+    /// nothing is blocked (the block hides IPv6 from the check).
+    async fn start(
+        &self,
+        tunnel: &Tunnel,
+        mode: EngineMode,
+        peer_address: Option<IpAddr>,
+        host_ipv6: bool,
+        probe: bool,
+    ) -> anyhow::Result<Running> {
         #[cfg(test)]
         self.test.before_start(mode)?;
 
         let api_listen = free_local_port().context("no free local port for the engine API")?;
         let api_secret = random_hex(16);
-        // Checked before the engine starts: once its adapter is up, every
-        // address looks routable.
-        let host_ipv6 = host_has_ipv6();
         if !host_ipv6 && mode == EngineMode::Tunnel {
             self.logs.info("No IPv6 on this network; the tunnel adapter will capture IPv4 only");
         }
@@ -660,7 +684,8 @@ impl PeerAddress {
         if !lookup {
             return self.last.ok_or_else(|| format!("Couldn't look up {} while traffic is blocked", self.host));
         }
-        let error = match tokio::time::timeout(LOOKUP_TIMEOUT, tokio::net::lookup_host((self.host.as_str(), self.port))).await {
+        let timeout = if self.last.is_some() { RELOOKUP_TIMEOUT } else { LOOKUP_TIMEOUT };
+        let error = match tokio::time::timeout(timeout, tokio::net::lookup_host((self.host.as_str(), self.port))).await {
             Ok(Ok(addresses)) => {
                 let addresses: Vec<IpAddr> = addresses.map(|a| a.ip()).collect();
                 // IPv4 first: the engine binds the tunnel's socket to IPv4

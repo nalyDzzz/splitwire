@@ -333,6 +333,8 @@ async fn supervisor_reconnects_without_blocking_when_the_kill_switch_is_off() {
     })
     .await;
     assert_eq!(firewall.engaged(), 0);
+    let waited = engine.logs(0).into_iter().any(|entry| entry.message.starts_with("Trying again"));
+    assert!(!waited, "the first drop of a session should be restarted at once");
     let echo = fixture.echo;
     tokio::task::spawn_blocking(move || echo_through(socks_port, echo)).await.unwrap().expect("echo after the restart");
 
