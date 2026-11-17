@@ -996,7 +996,7 @@ struct TestHooks {
     /// Replaces the TUN inbound.
     inbound: Option<serde_json::Value>,
     /// Tunnel-mode starts that should fail before launching anything.
-    fail_tunnel_starts: std::sync::atomic::AtomicU32,
+    fail_tunnel_starts: Mutex<u32>,
     /// Every engine started, in order.
     pids: Mutex<Vec<u32>>,
 }
@@ -1004,9 +1004,9 @@ struct TestHooks {
 #[cfg(test)]
 impl TestHooks {
     fn before_start(&self, mode: EngineMode) -> anyhow::Result<()> {
-        let fail = mode == EngineMode::Tunnel
-            && self.fail_tunnel_starts.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
-        if fail {
+        let mut left = self.fail_tunnel_starts.lock().unwrap();
+        if mode == EngineMode::Tunnel && *left > 0 {
+            *left -= 1;
             bail!("simulated start failure");
         }
         Ok(())
@@ -1029,7 +1029,7 @@ impl Engine {
     }
 
     pub(crate) fn fail_next_tunnel_starts(&self, count: u32) {
-        self.core.test.fail_tunnel_starts.store(count, Ordering::SeqCst);
+        *self.core.test.fail_tunnel_starts.lock().unwrap() = count;
     }
 
     pub(crate) fn last_engine_pid(&self) -> Option<u32> {
