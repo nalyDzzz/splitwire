@@ -66,7 +66,7 @@ export function NewTunnelDialog() {
       name: "",
       interface: { privateKey: keys.privateKey, addresses: [], dns: [], mtu: null },
       peer: { publicKey: "", presharedKey: null, endpoint: "", allowedIps: [], persistentKeepalive: null },
-      routing: { appMode: "selected", apps: [], bypassApps: [], bypassIps: [], dnsMode: "system" },
+      routing: { appMode: "selected", apps: [], bypassApps: [], bypassIps: [], dnsMode: "system", killSwitch: false },
     };
     const { tunnel, errors: parseErrors } = fromDraft(base, {
       name: form.name,

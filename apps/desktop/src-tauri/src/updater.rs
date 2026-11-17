@@ -160,7 +160,9 @@ async fn download_and_install(app: &AppHandle) -> anyhow::Result<()> {
         .lock()
         .unwrap()
         .engine()
-        .filter(|e| matches!(e.state, ConnectionState::Connected | ConnectionState::Connecting))
+        .filter(|e| {
+            matches!(e.state, ConnectionState::Connected | ConnectionState::Connecting | ConnectionState::Reconnecting)
+        })
         .and_then(|e| e.tunnel_id.clone());
     if let Some(id) = active {
         if let Err(error) = app_state.store.lock().unwrap().set_resume(&id) {

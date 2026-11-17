@@ -222,7 +222,7 @@ pub(crate) fn toggle_from_tray(app: &AppHandle) {
         let state = app.state::<AppState>();
         let engine_state = state.status.lock().unwrap().engine().map(|e| e.state);
         let result = match engine_state {
-            Some(ConnectionState::Connected | ConnectionState::Connecting) => {
+            Some(ConnectionState::Connected | ConnectionState::Connecting | ConnectionState::Reconnecting) => {
                 service_client::request(Request::Disconnect).await.map(|_| ()).map_err(CommandError::from)
             }
             Some(_) => {
@@ -261,7 +261,9 @@ pub(crate) fn quit(app: &AppHandle) {
             .lock()
             .unwrap()
             .engine()
-            .is_some_and(|e| matches!(e.state, ConnectionState::Connected | ConnectionState::Connecting));
+            .is_some_and(|e| {
+                matches!(e.state, ConnectionState::Connected | ConnectionState::Connecting | ConnectionState::Reconnecting)
+            });
         if running {
             let _ = service_client::request(Request::Disconnect).await;
         }

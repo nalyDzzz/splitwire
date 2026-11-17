@@ -46,6 +46,11 @@ export interface Routing {
   /** CIDR strings that never use the tunnel. */
   bypassIps: string[];
   dnsMode: DnsMode;
+  /**
+   * While the tunnel is down and the service is bringing it back, block the
+   * traffic that would have used it instead of letting it go direct.
+   */
+  killSwitch: boolean;
 }
 
 /** "all": every app except bypassed ones. "selected": only `apps`. */
@@ -91,7 +96,10 @@ export type ConnectionState =
   | "disconnected"
   | "connecting"
   | "connected"
+  /** The tunnel dropped after it was up; the service is bringing it back. */
+  | "reconnecting"
   | "disconnecting"
+  /** The connect attempt failed. Not retried. */
   | "failed";
 
 export interface EngineStatus {
@@ -104,6 +112,24 @@ export interface EngineStatus {
   traffic: Traffic;
   /** Whether traffic actually gets through the tunnel. Only meaningful while connected. */
   health: Health;
+  /** What the kill switch is blocking right now. */
+  blocking: Blocking;
+  /** Progress while reconnecting. */
+  reconnect: Reconnect | null;
+}
+
+/**
+ * "off": nothing (kill switch off, or the tunnel is up).
+ * "apps": traffic that would use the tunnel is refused; other apps work.
+ * "all": everything except the engine, while the engine restarts.
+ */
+export type Blocking = "off" | "apps" | "all";
+
+export interface Reconnect {
+  /** Failures behind the current back-off: failed attempts, and drops soon after a reconnect. */
+  failures: number;
+  /** Unix ms of the next attempt; null while one is running. */
+  retryAt: number | null;
 }
 
 /**

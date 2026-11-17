@@ -6,8 +6,11 @@
 //   ?connect=<tunnel name>                       connect to a tunnel on load
 //   ?health=failing                              connected, but nothing gets through
 //   ?update[=fail]                               a newer release is available (installing it fails)
+//   ?drop                                        the tunnel drops a few seconds after connecting
 // The tunnel named "lab" always fails to connect, to show the failed state.
-// `window.splitwireMock.dropConf()` simulates dropping a .conf on the window.
+// "home" has the kill switch on, so a drop there shows what it blocks.
+// `window.splitwireMock.dropConf()` simulates dropping a .conf on the window,
+// `window.splitwireMock.drop()` drops the connected tunnel.
 
 import type { Backend } from "./api";
 import { basename } from "./format";
@@ -86,6 +89,7 @@ const SEED: Tunnel[] = [
       bypassApps: names(["chrome", "Discord", "slack", "ms-teams", "Zoom", "steam", "Spotify", "httpd"]),
       bypassIps: [],
       dnsMode: "system",
+      killSwitch: false,
     },
   },
   {
@@ -105,6 +109,7 @@ const SEED: Tunnel[] = [
       bypassApps: names(["Discord", "steam", "Spotify"]),
       bypassIps: ["192.168.0.0/16"],
       dnsMode: "tunnel",
+      killSwitch: true,
     },
   },
   {
@@ -128,6 +133,7 @@ const SEED: Tunnel[] = [
       bypassApps: [],
       bypassIps: [],
       dnsMode: "system",
+      killSwitch: false,
     },
   },
 ];
@@ -254,6 +260,8 @@ const DISCONNECTED: EngineStatus = {
     direct: { upload: 0, download: 0, uploadRate: 0, downloadRate: 0, connections: 0 },
   },
   health: { state: "unknown" },
+  blocking: "off",
+  reconnect: null,
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -324,6 +332,7 @@ function mockParse(text: string, name: string): ImportedTunnel {
         bypassApps,
         bypassIps: list("DisallowedIPs").map(cidr).filter(isCidr),
         dnsMode: dns.length && !apps.length ? "tunnel" : "system",
+        killSwitch: false,
       },
     },
     warnings,
@@ -353,7 +362,8 @@ export function createMockBackend(): Backend {
     closeToTray: true,
     launchAtLogin: false,
     connectOnLaunch: false,
-    lastTunnelId: "t-work",
+    // Open on the tunnel `?connect` connects, so its panel is the one shown.
+    lastTunnelId: tunnels.find((t) => t.name === params.get("connect"))?.id ?? "t-work",
     autoCheckUpdates: true,
     healthCheck: true,
   };
@@ -456,8 +466,63 @@ export function createMockBackend(): Backend {
     emit();
   }, 1000);
 
+  // The engine stops on its own: the service retries at once (blocking
+  // everything if the kill switch is on), fails once, waits with only the
+  // tunnel's apps blocked, then gets the tunnel back.
+  const simulateDrop = async () => {
+    const tunnel = activeTunnel();
+    if (engine.state !== "connected" || !tunnel) return;
+    const id = tunnel.id;
+    const still = () => engine.state === "reconnecting" && engine.tunnelId === id;
+    const kill = tunnel.routing.killSwitch;
+    const dropped = "The engine stopped unexpectedly (exit code 2)";
+    connections = [];
+    engine = {
+      ...engine,
+      state: "reconnecting",
+      error: dropped,
+      traffic: clone(DISCONNECTED.traffic),
+      health: { state: "unknown" },
+      blocking: kill ? "all" : "off",
+      reconnect: { failures: 0, retryAt: null },
+    };
+    log("error", "service", `Tunnel dropped: ${dropped}`);
+    log("warn", "service", kill
+      ? "Kill switch: blocking all traffic until the engine is back"
+      : "Apps that use the tunnel are on your normal connection until it's back");
+    emit();
+    await sleep(1400);
+    if (!still()) return;
+
+    const failed = "timed out waiting for the engine to start";
+    engine = { ...engine, error: failed, blocking: kill ? "apps" : "off", reconnect: { failures: 1, retryAt: Date.now() + 8000 } };
+    log("warn", "service", `Reconnect attempt failed: ${failed}`);
+    if (kill) log("info", "service", "Kill switch: blocking only the apps that use the tunnel while waiting");
+    log("info", "service", "Trying again in 8 seconds");
+    emit();
+    await sleep(8000);
+    if (!still()) return;
+
+    engine = { ...engine, blocking: kill ? "all" : "off", reconnect: { failures: 1, retryAt: null } };
+    emit();
+    await sleep(1100);
+    if (!still()) return;
+
+    engine = { ...engine, state: "connected", error: null, blocking: "off", reconnect: null, health: { state: "checking" } };
+    for (let i = 0; i < 10; i++) connections.push(newConnection(tunnel));
+    log("info", "engine", "sing-box started (0.398s)");
+    log("info", "service", `Reconnected "${tunnel.name}"`);
+    emit();
+    setTimeout(() => {
+      if (engine.state !== "connected" || engine.tunnelId !== id) return;
+      engine = { ...engine, health: { state: "ok", latencyMs: 18 + Math.round(Math.random() * 20) } };
+      emit();
+    }, 900);
+  };
+
   (globalThis as Record<string, unknown>).splitwireMock = {
     dropConf: () => importHandlers.forEach((h) => h(mockParse(sampleConf(), "dropped-config"))),
+    drop: () => void simulateDrop(),
   };
 
   log("info", "service", "Splitwire service 0.1.0 starting");
@@ -552,6 +617,7 @@ export function createMockBackend(): Backend {
         };
         emit();
       }, 900);
+      if (params.has("drop")) setTimeout(() => void simulateDrop(), 6000);
     },
     async disconnect() {
       requireService();

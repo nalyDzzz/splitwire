@@ -7,8 +7,10 @@ use splitwire_core::consts::PIPE_NAME;
 use splitwire_core::ipc::{self, EngineStatus, Request, Response, MAX_MESSAGE_BYTES};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-/// Starting a tunnel waits for sing-box to come up; everything else is quick.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Starting a tunnel waits on the service, which may stop the previous tunnel
+/// (up to 10 s), look up the server (10 s) and start sing-box (20 s).
+/// Everything else is quick.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]

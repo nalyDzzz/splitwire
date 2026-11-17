@@ -61,8 +61,11 @@ pub enum ConnectionState {
     Disconnected,
     Connecting,
     Connected,
+    /// The tunnel dropped after it was up, and the service is bringing it
+    /// back. See [`EngineStatus::reconnect`] and [`EngineStatus::blocking`].
+    Reconnecting,
     Disconnecting,
-    /// The last connect attempt failed or the engine stopped unexpectedly.
+    /// The connect attempt failed. Not retried: the person sees why.
     Failed,
 }
 
@@ -78,6 +81,12 @@ pub struct EngineStatus {
     pub traffic: Traffic,
     /// Whether traffic actually gets through the tunnel. Only meaningful while connected.
     pub health: Health,
+    /// What the kill switch is blocking right now.
+    #[serde(default)]
+    pub blocking: Blocking,
+    /// Progress while [`ConnectionState::Reconnecting`].
+    #[serde(default)]
+    pub reconnect: Option<Reconnect>,
 }
 
 impl EngineStatus {
@@ -90,8 +99,33 @@ impl EngineStatus {
             error: None,
             traffic: Traffic::default(),
             health: Health::Unknown,
+            blocking: Blocking::Off,
+            reconnect: None,
         }
     }
+}
+
+/// What the kill switch blocks while the tunnel is down.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Blocking {
+    /// Nothing: the kill switch is off, or the tunnel is up.
+    #[default]
+    Off,
+    /// Traffic that would use the tunnel is refused; other apps work.
+    Apps,
+    /// Everything except the engine itself, while the engine restarts.
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reconnect {
+    /// Failures behind the current back-off: failed attempts, and drops
+    /// soon after a reconnect.
+    pub failures: u32,
+    /// Unix milliseconds of the next attempt; `None` while one is running.
+    pub retry_at: Option<i64>,
 }
 
 /// Result of periodically sending a test request through the tunnel.
@@ -209,6 +243,28 @@ mod tests {
 
         let parsed: Request = serde_json::from_str("{\"type\":\"disconnect\"}").unwrap();
         assert!(matches!(parsed, Request::Disconnect));
+    }
+
+    #[test]
+    fn status_from_an_older_service_still_parses() {
+        let mut value = serde_json::to_value(EngineStatus::disconnected()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("blocking");
+        object.remove("reconnect");
+        let status: EngineStatus = serde_json::from_value(value).unwrap();
+        assert_eq!(status.blocking, Blocking::Off);
+        assert_eq!(status.reconnect, None);
+
+        let reconnecting = EngineStatus {
+            state: ConnectionState::Reconnecting,
+            blocking: Blocking::Apps,
+            reconnect: Some(Reconnect { failures: 2, retry_at: Some(5) }),
+            ..EngineStatus::disconnected()
+        };
+        let value = serde_json::to_value(&reconnecting).unwrap();
+        assert_eq!(value["state"], "reconnecting");
+        assert_eq!(value["blocking"], "apps");
+        assert_eq!(value["reconnect"]["retryAt"], 5);
     }
 
     #[test]

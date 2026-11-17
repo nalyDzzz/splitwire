@@ -7,7 +7,7 @@
 //! The service generates this itself from a validated [`Tunnel`]; it never
 //! accepts raw engine config from clients, because sing-box runs as SYSTEM.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use ipnet::IpNet;
 use serde_json::{json, Value};
@@ -23,8 +23,20 @@ const DNS_DIRECT_TAG: &str = "dns-direct";
 const DNS_TUNNEL_TAG: &str = "dns-tunnel";
 const DEFAULT_WG_MTU: u16 = 1420;
 
+/// What the engine is started for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineMode {
+    /// Route traffic through the tunnel.
+    Tunnel,
+    /// Kill switch while the tunnel is down: refuse the traffic that would
+    /// have used the tunnel and let everything else go direct as usual. Has
+    /// no WireGuard endpoint, so it starts without the server or DNS.
+    Blocked,
+}
+
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
+    pub mode: EngineMode,
     pub interface_name: String,
     /// Where sing-box serves its Clash-compatible API (for stats and connections).
     pub api_listen: SocketAddr,
@@ -33,52 +45,34 @@ pub struct EngineOptions {
     pub log_level: String,
     /// Whether this machine has IPv6 internet outside the tunnel.
     pub host_ipv6: bool,
+    /// The peer's address as resolved by the service. Used instead of the
+    /// endpoint's hostname, so starting the engine never waits on DNS.
+    pub peer_address: Option<IpAddr>,
 }
 
 pub fn build_config(tunnel: &Tunnel, opts: &EngineOptions) -> Result<Value, String> {
-    let endpoint = tunnel.endpoint()?;
+    let blocked = opts.mode == EngineMode::Blocked;
     let routing = &tunnel.routing;
-
-    let mut peer = json!({
-        "address": endpoint.host,
-        "port": endpoint.port,
-        "public_key": tunnel.peer.public_key.trim(),
-        "allowed_ips": nets(&tunnel.peer.allowed_ips),
-    });
-    if let Some(psk) = &tunnel.peer.preshared_key {
-        peer["pre_shared_key"] = json!(psk.trim());
-    }
-    if let Some(keepalive) = tunnel.peer.persistent_keepalive.filter(|k| *k > 0) {
-        peer["persistent_keepalive_interval"] = json!(keepalive);
-    }
-
-    let mut wireguard = json!({
-        "type": "wireguard",
-        "tag": TUNNEL_TAG,
-        "mtu": tunnel.interface.mtu.unwrap_or(DEFAULT_WG_MTU),
-        "address": nets(&tunnel.interface.addresses),
-        "private_key": tunnel.interface.private_key.trim(),
-        "peers": [peer],
-    });
-    // With auto_detect_interface on, sing-box binds the WireGuard socket to
-    // the default adapter as dual-stack. On adapters without IPv6 that bind
-    // fails, the endpoint stays down, and the handshake never happens. Pin
-    // the socket to IPv4 unless the peer is an IPv6 address.
-    if endpoint.host.parse::<std::net::Ipv6Addr>().is_err() {
-        wireguard["inet4_bind_address"] = json!("0.0.0.0");
-    }
+    let endpoints = if blocked { Vec::new() } else { vec![wireguard_endpoint(tunnel, opts.peer_address)?] };
 
     let mut dns_servers = vec![json!({ "type": "local", "tag": DNS_DIRECT_TAG })];
+    let mut dns_rules = Vec::new();
     let mut dns_final = DNS_DIRECT_TAG;
     if routing.dns_mode == DnsMode::Tunnel {
         if let Some(server) = tunnel.interface.dns.first() {
-            dns_servers.push(json!({
-                "type": "udp",
-                "tag": DNS_TUNNEL_TAG,
-                "server": server.to_string(),
-                "detour": TUNNEL_TAG,
-            }));
-            dns_final = DNS_TUNNEL_TAG;
+            if blocked {
+                // Lookups are meant to go through the tunnel. Refuse them
+                // rather than leak every name to the normal network.
+                dns_rules.push(json!({ "action": "reject" }));
+            } else {
+                dns_servers.push(json!({
+                    "type": "udp",
+                    "tag": DNS_TUNNEL_TAG,
+                    "server": server.to_string(),
+                    "detour": TUNNEL_TAG,
+                }));
+                dns_final = DNS_TUNNEL_TAG;
+            }
         }
     }
 
@@ -89,16 +83,22 @@ pub fn build_config(tunnel: &Tunnel, opts: &EngineOptions) -> Result<Value, Stri
         // connection list can show names instead of bare IPs.
         "reverse_mapping": true,
     });
+    if !dns_rules.is_empty() {
+        dns["rules"] = json!(dns_rules);
+    }
     // With no IPv6 anywhere, stop handing out IPv6 addresses so apps don't
     // try (and wait on) connections that can't work.
     if !opts.host_ipv6 && !tunnel.has_ipv6_address() {
         dns["strategy"] = json!("ipv4_only");
     }
 
+    // Where in-scope traffic goes.
+    let to_tunnel = if blocked { json!({ "action": "reject" }) } else { json!({ "outbound": TUNNEL_TAG }) };
+
     Ok(json!({
         "log": { "level": opts.log_level, "timestamp": false },
         "dns": dns,
-        "endpoints": [wireguard],
+        "endpoints": endpoints,
         "inbounds": [{
             "type": "tun",
             "tag": "tun-in",
@@ -123,7 +123,7 @@ pub fn build_config(tunnel: &Tunnel, opts: &EngineOptions) -> Result<Value, Stri
             "auto_detect_interface": true,
             "find_process": true,
             "default_domain_resolver": DNS_DIRECT_TAG,
-            "rules": route_rules(tunnel, opts.host_ipv6),
+            "rules": route_rules(tunnel, opts.host_ipv6, &to_tunnel),
             "final": DIRECT_TAG,
         },
         "experimental": {
@@ -135,7 +135,44 @@ pub fn build_config(tunnel: &Tunnel, opts: &EngineOptions) -> Result<Value, Stri
     }))
 }
 
-fn route_rules(tunnel: &Tunnel, host_ipv6: bool) -> Vec<Value> {
+fn wireguard_endpoint(tunnel: &Tunnel, peer_address: Option<IpAddr>) -> Result<Value, String> {
+    let endpoint = tunnel.endpoint()?;
+    let host = peer_address.map_or(endpoint.host, |ip| ip.to_string());
+
+    let mut peer = json!({
+        "address": host,
+        "port": endpoint.port,
+        "public_key": tunnel.peer.public_key.trim(),
+        "allowed_ips": nets(&tunnel.peer.allowed_ips),
+    });
+    if let Some(psk) = &tunnel.peer.preshared_key {
+        peer["pre_shared_key"] = json!(psk.trim());
+    }
+    if let Some(keepalive) = tunnel.peer.persistent_keepalive.filter(|k| *k > 0) {
+        peer["persistent_keepalive_interval"] = json!(keepalive);
+    }
+
+    let mut wireguard = json!({
+        "type": "wireguard",
+        "tag": TUNNEL_TAG,
+        "mtu": tunnel.interface.mtu.unwrap_or(DEFAULT_WG_MTU),
+        "address": nets(&tunnel.interface.addresses),
+        "private_key": tunnel.interface.private_key.trim(),
+        "peers": [peer],
+    });
+    // With auto_detect_interface on, sing-box binds the WireGuard socket to
+    // the default adapter as dual-stack. On adapters without IPv6 that bind
+    // fails, the endpoint stays down, and the handshake never happens. Pin
+    // the socket to IPv4 unless the peer is an IPv6 address.
+    if host.parse::<Ipv6Addr>().is_err() {
+        wireguard["inet4_bind_address"] = json!("0.0.0.0");
+    }
+    Ok(wireguard)
+}
+
+/// `to_tunnel` is merged into the rules that pick tunneled traffic: an
+/// outbound normally, a reject action in [`EngineMode::Blocked`].
+fn route_rules(tunnel: &Tunnel, host_ipv6: bool, to_tunnel: &Value) -> Vec<Value> {
     let routing = &tunnel.routing;
     // Refusing straight away (TCP reset / ICMP unreachable) makes apps fall
     // back to IPv4 at once, instead of waiting on a connection that can't work.
@@ -156,7 +193,7 @@ fn route_rules(tunnel: &Tunnel, host_ipv6: bool) -> Vec<Value> {
     if !routing.bypass_ips.is_empty() {
         rules.push(json!({ "ip_cidr": nets(&routing.bypass_ips), "outbound": DIRECT_TAG }));
     }
-    rules.extend(tunnel_rules(tunnel));
+    rules.extend(tunnel_rules(tunnel, to_tunnel));
     if !host_ipv6 && tunnel.has_ipv6_address() {
         // Only the tunnel can carry IPv6; anything left would go direct.
         rules.push(reject_ipv6);
@@ -164,8 +201,8 @@ fn route_rules(tunnel: &Tunnel, host_ipv6: bool) -> Vec<Value> {
     rules
 }
 
-/// Rules that send in-scope traffic into the tunnel.
-fn tunnel_rules(tunnel: &Tunnel) -> Vec<Value> {
+/// Rules that pick in-scope traffic and send it where `to_tunnel` says.
+fn tunnel_rules(tunnel: &Tunnel, to_tunnel: &Value) -> Vec<Value> {
     let routing = &tunnel.routing;
     // Which apps are in scope. `None` means every app.
     let scope = match routing.app_mode {
@@ -192,7 +229,11 @@ fn tunnel_rules(tunnel: &Tunnel) -> Vec<Value> {
         rules.push(scoped(json!({ "ip_cidr": nets(&v6), "action": "reject" })));
     }
     if !tunneled.is_empty() {
-        rules.push(scoped(json!({ "ip_cidr": nets(&tunneled), "outbound": TUNNEL_TAG })));
+        let mut rule = scoped(json!({ "ip_cidr": nets(&tunneled) }));
+        for (key, value) in to_tunnel.as_object().into_iter().flatten() {
+            rule[key] = value.clone();
+        }
+        rules.push(rule);
     }
     rules
 }
@@ -237,11 +278,13 @@ mod tests {
 
     fn opts() -> EngineOptions {
         EngineOptions {
+            mode: EngineMode::Tunnel,
             interface_name: "Splitwire".into(),
             api_listen: "127.0.0.1:19090".parse().unwrap(),
             api_secret: "secret".into(),
             log_level: "info".into(),
             host_ipv6: true,
+            peer_address: None,
         }
     }
 
@@ -282,6 +325,7 @@ mod tests {
             bypass_apps: vec![AppRule::name("chrome")],
             bypass_ips: vec!["10.0.0.0/8".parse().unwrap()],
             dns_mode: DnsMode::System,
+            kill_switch: false,
         };
         let config = build_config(&tunnel(routing, &["10.8.0.2/24"]), &opts()).unwrap();
         let rules = config["route"]["rules"].as_array().unwrap();
@@ -340,6 +384,70 @@ mod tests {
         assert_eq!(last["process_path_regex"][0], r"(?i)^C:\\Program Files\\JetBrains\\");
     }
 
+    #[test]
+    fn resolved_peer_address_replaces_the_hostname() {
+        let t = tunnel(Routing::default(), &["10.8.0.2/32"]);
+        let v4 = EngineOptions { peer_address: Some("203.0.113.10".parse().unwrap()), ..opts() };
+        let config = build_config(&t, &v4).unwrap();
+        assert_eq!(config["endpoints"][0]["peers"][0]["address"], "203.0.113.10");
+        assert_eq!(config["endpoints"][0]["peers"][0]["port"], 51820);
+        assert_eq!(config["endpoints"][0]["inet4_bind_address"], "0.0.0.0");
+
+        // A hostname that only resolves to IPv6 keeps the dual-stack bind.
+        let v6 = EngineOptions { peer_address: Some("2001:db8::1".parse().unwrap()), ..opts() };
+        let config = build_config(&t, &v6).unwrap();
+        assert_eq!(config["endpoints"][0]["peers"][0]["address"], "2001:db8::1");
+        assert!(config["endpoints"][0].get("inet4_bind_address").is_none());
+    }
+
+    #[test]
+    fn blocked_mode_refuses_what_the_tunnel_would_carry() {
+        let routing = Routing {
+            app_mode: AppMode::Selected,
+            apps: vec![AppRule::name("qbittorrent")],
+            bypass_apps: vec![AppRule::name("chrome")],
+            bypass_ips: vec!["10.0.0.0/8".parse().unwrap()],
+            dns_mode: DnsMode::System,
+            kill_switch: true,
+        };
+        let t = tunnel(routing, &["10.8.0.2/24"]);
+        let normal = build_config(&t, &opts()).unwrap();
+        let blocked = build_config(&t, &EngineOptions { mode: EngineMode::Blocked, ..opts() }).unwrap();
+
+        // No WireGuard endpoint, so nothing can fail to resolve or bind.
+        assert_eq!(blocked["endpoints"], json!([]));
+        assert!(!blocked.to_string().contains(&format!("\"{TUNNEL_TAG}\"")));
+
+        // Same rules, same order: only the tunnel rule turns into a reject.
+        let normal_rules = normal["route"]["rules"].as_array().unwrap();
+        let blocked_rules = blocked["route"]["rules"].as_array().unwrap();
+        assert_eq!(normal_rules.len(), blocked_rules.len());
+        let last = blocked_rules.last().unwrap();
+        assert_eq!(last["action"], "reject");
+        assert!(last.get("outbound").is_none());
+        assert_eq!(last["ip_cidr"], json!(["0.0.0.0/0"]));
+        assert_eq!(last["process_path_regex"][0], r"(?i)(?:^|\\)qbittorrent\.exe$");
+        for (a, b) in normal_rules.iter().zip(blocked_rules).take(normal_rules.len() - 1) {
+            assert_eq!(a, b);
+        }
+        assert_eq!(blocked["route"]["final"], DIRECT_TAG);
+        assert_eq!(blocked["inbounds"], normal["inbounds"]);
+        // Normal DNS still works for everything else.
+        assert!(blocked["dns"].get("rules").is_none());
+    }
+
+    #[test]
+    fn blocked_mode_refuses_lookups_meant_for_the_tunnel() {
+        let routing = Routing { app_mode: AppMode::All, dns_mode: DnsMode::Tunnel, kill_switch: true, ..Routing::default() };
+        let blocked = build_config(&tunnel(routing, &["10.8.0.2/32"]), &EngineOptions { mode: EngineMode::Blocked, ..opts() }).unwrap();
+        assert_eq!(blocked["dns"]["rules"], json!([{ "action": "reject" }]));
+        assert_eq!(blocked["dns"]["final"], DNS_DIRECT_TAG);
+        assert_eq!(blocked["dns"]["servers"].as_array().unwrap().len(), 1);
+        let rules = blocked["route"]["rules"].as_array().unwrap();
+        assert_eq!(rules.last().unwrap()["action"], "reject");
+        assert!(rules.last().unwrap().get("process_path_regex").is_none());
+    }
+
     /// Validates generated configs with a real sing-box binary when one is
     /// available (run `pnpm fetch:engine` first). Skipped otherwise.
     #[test]
@@ -362,10 +470,17 @@ mod tests {
                 bypass_apps: vec![AppRule::name("chrome")],
                 bypass_ips: vec!["192.168.0.0/16".parse().unwrap()],
                 dns_mode: DnsMode::System,
+                kill_switch: true,
             },
             Routing { app_mode: AppMode::All, dns_mode: DnsMode::Tunnel, ..Routing::default() },
         ];
-        let hosts = [opts(), EngineOptions { host_ipv6: false, ..opts() }];
+        let hosts = [
+            opts(),
+            EngineOptions { host_ipv6: false, ..opts() },
+            EngineOptions { peer_address: Some("203.0.113.10".parse().unwrap()), ..opts() },
+            EngineOptions { mode: EngineMode::Blocked, ..opts() },
+            EngineOptions { mode: EngineMode::Blocked, host_ipv6: false, ..opts() },
+        ];
         for (routing, host) in routings.iter().flat_map(|r| hosts.iter().map(move |h| (r.clone(), h))) {
             let config = build_config(&tunnel(routing, &["10.8.0.2/24"]), host).unwrap();
             let mut child = std::process::Command::new(&exe)
