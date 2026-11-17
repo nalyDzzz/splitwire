@@ -3691,7 +3691,7 @@ dependencies = [
 
 [[package]]
 name = "splitwire-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "splitwire-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -3730,7 +3730,7 @@ dependencies = [
 
 [[package]]
 name = "splitwire-service"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "getrandom 0.4.3",
