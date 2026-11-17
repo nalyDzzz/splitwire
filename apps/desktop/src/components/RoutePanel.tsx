@@ -1,16 +1,18 @@
 // The signature element: an illuminated route diagram, like a signal-box
 // panel. Traffic leaves "This PC" and is switched onto two tracks. The tunnel
 // track flashes while the route is being set, then glows steady with traffic
-// flowing along it. The apps riding each track sit on the line.
+// flowing along it. The apps riding each track sit on the line. When the
+// tunnel drops and the kill switch holds traffic back, a red stop bar sits
+// across whichever tracks are blocked.
 
 import clsx from "clsx";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Power, RotateCw, ShieldAlert } from "lucide-react";
+import { Power, RotateCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { formatClock, formatDuration, plural, rateParts } from "@/lib/format";
 import { ruleIconPath, ruleLabel } from "@/lib/rules";
-import type { Connection, EngineStatus, ServiceStatus, Tunnel } from "@/lib/types";
+import type { Blocking, Connection, EngineStatus, ServiceStatus, Tunnel } from "@/lib/types";
 import { useStore, type TrafficSample } from "@/store";
 
 import { AppIcon } from "./AppIcon";
@@ -21,7 +23,14 @@ const Y_TUNNEL = 82;
 const Y_DIRECT = 172;
 const PAD = 28;
 
-type PanelState = "disconnected" | "connecting" | "connected" | "disconnecting" | "failed" | "unavailable";
+type PanelState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnecting"
+  | "failed"
+  | "unavailable";
 
 interface Rider {
   key: string;
@@ -57,6 +66,7 @@ export function RoutePanel({
   const traffic = live && engine ? engine.traffic : null;
   // Up, but the health probe can't get anything through.
   const failing = live && engine?.health.state === "failing";
+  const blocking: Blocking = state === "reconnecting" && engine ? engine.blocking : "off";
 
   // Geometry.
   const W = width;
@@ -98,7 +108,7 @@ export function RoutePanel({
       ? "failed"
       : state === "connected"
         ? "lit"
-        : state === "connecting" || state === "disconnecting"
+        : state === "connecting" || state === "disconnecting" || state === "reconnecting"
           ? "setting"
           : "off";
 
@@ -177,6 +187,10 @@ export function RoutePanel({
             style={tunnelTone === "setting" ? { fill: "var(--color-lamp)" } : undefined}
           />
 
+          {/* the kill switch holding traffic back: across the tunnel's branch, or the whole trunk */}
+          {blocking === "apps" && <StopBar x={xCurveEnd + 2} y={Y_TUNNEL} />}
+          {blocking === "all" && <StopBar x={xJ - 34} y={Y_DIRECT} />}
+
           {/* the switch */}
           <rect
             x={xJ - 6}
@@ -212,7 +226,11 @@ export function RoutePanel({
         idle={
           state === "failed"
             ? "No route"
-            : tunnel.routing.appMode === "all"
+            : state === "reconnecting"
+              ? blocking === "off"
+                ? "Down · apps go direct"
+                : "Down · blocked"
+              : tunnel.routing.appMode === "all"
               ? "Every app, except bypassed ones"
               : plural(tunnel.routing.apps.length, "app rule")
         }
@@ -228,7 +246,7 @@ export function RoutePanel({
         up={traffic?.direct.uploadRate}
         series={history}
         pick={(s) => s.directDown + s.directUp}
-        idle={state === "connected" ? "" : "Everything else"}
+        idle={state === "connected" ? "" : blocking === "all" ? "Blocked for now" : "Everything else"}
       />
 
       {width > 0 && (
@@ -325,6 +343,16 @@ function Riders({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/** A red bar across a track: nothing passes here right now. */
+function StopBar({ x, y }: { x: number; y: number }) {
+  return (
+    <g>
+      <rect x={x - 3} y={y - 13} width="6" height="26" rx="2" fill="var(--color-signal)" opacity="0.45" filter="url(#glow)" />
+      <rect x={x - 2} y={y - 11} width="4" height="22" rx="1.5" fill="var(--color-signal)" />
+    </g>
   );
 }
 
@@ -437,7 +465,8 @@ function StateBlock({
   const installService = useStore((s) => s.installService);
   const busy = useStore((s) => s.busy);
   const stale = useStore((s) => s.stale[tunnel.id]);
-  const now = useNow(state === "connected");
+  const now = useNow(state === "connected" || state === "reconnecting");
+  const killSwitch = tunnel.routing.killSwitch;
 
   const other =
     engine && engine.tunnelId !== tunnel.id && engine.state !== "disconnected" && engine.state !== "failed"
@@ -544,6 +573,46 @@ function StateBlock({
       );
       break;
     }
+    case "reconnecting": {
+      title = "Reconnecting";
+      tone = "lamp";
+      const retryAt = engine?.reconnect?.retryAt ?? null;
+      const blocking = engine?.blocking ?? "off";
+      const scopeApps = tunnel.routing.appMode === "all" ? "Apps" : "This tunnel's apps";
+      const held =
+        blocking === "all"
+          ? "Blocking all traffic until the engine is back."
+          : blocking === "apps"
+            ? tunnel.routing.appMode === "all"
+              ? "Blocking every app except Always direct ones until it's back."
+              : "Blocking this tunnel's apps until it's back. Other apps work."
+            : killSwitch
+              ? "The kill switch couldn't block traffic. Check the logs."
+              : `${scopeApps} use your normal connection until it's back.`;
+      detail = (
+        <span className="flex flex-col gap-0.5">
+          <span className={clsx(blocking === "off" ? "text-ink-2" : "text-[#ffb3ab]")}>{held}</span>
+          <span className="line-clamp-1 text-xs text-ink-3" title={engine?.error ?? undefined}>
+            {/* `now` only ticks once a second; read the clock so the first value isn't a second off. */}
+            {retryAt ? `Next try in ${Math.max(1, Math.ceil((retryAt - Date.now()) / 1000))} s` : "Trying now…"}
+            {engine?.error && <> · {engine.error}</>}
+          </span>
+        </span>
+      );
+      actions = (
+        <Button
+          variant="outline"
+          size="lg"
+          onClick={disconnect}
+          disabled={busy}
+          icon={<Power size={16} />}
+          title={blocking === "off" ? undefined : "Stops blocking and turns the tunnel off"}
+        >
+          Disconnect
+        </Button>
+      );
+      break;
+    }
     case "failed":
       title = "Couldn't connect";
       tone = "signal";
@@ -565,23 +634,36 @@ function StateBlock({
       );
   }
 
+  const guarded = killSwitch && (state === "connected" || state === "reconnecting");
+
   return (
     <div className="absolute top-5 left-7 flex max-w-[min(46%,420px)] flex-col items-start">
-      <motion.h2
-        key={title}
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-        className={clsx(
-          "font-expanded text-[26px] leading-none font-[650] tracking-[-0.02em]",
-          tone === "lamp" && "text-lamp",
-          tone === "signal" && "text-signal",
-          tone === "ink" && "text-ink",
-          tone === "dim" && "text-ink-2",
+      <div className="flex items-center gap-2.5">
+        <motion.h2
+          key={title}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+          className={clsx(
+            "font-expanded text-[26px] leading-none font-[650] tracking-[-0.02em]",
+            tone === "lamp" && "text-lamp",
+            tone === "signal" && "text-signal",
+            tone === "ink" && "text-ink",
+            tone === "dim" && "text-ink-2",
+          )}
+        >
+          {title}
+        </motion.h2>
+        {guarded && (
+          <span
+            className="flex items-center gap-1 rounded-md border border-rule-2 px-1.5 py-0.5 text-2xs text-ink-2"
+            title="Kill switch on: if the tunnel drops, its apps are blocked until it's back."
+          >
+            <ShieldCheck size={12} className="text-go" />
+            Kill switch
+          </span>
         )}
-      >
-        {title}
-      </motion.h2>
+      </div>
       <div className="mt-2 min-h-[38px] text-sm leading-snug text-ink-2">{detail}</div>
       <div className="mt-2 flex flex-wrap gap-2">{actions}</div>
     </div>

@@ -214,6 +214,7 @@ pub fn parse(text: &str, name: &str) -> Result<ImportedTunnel, ParseError> {
             bypass_apps: draft.disallowed_apps,
             bypass_ips: draft.disallowed_ips,
             dns_mode,
+            kill_switch: false,
         },
     };
 

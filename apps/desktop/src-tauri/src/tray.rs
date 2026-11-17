@@ -1,6 +1,6 @@
 //! System tray icon and menu.
 
-use splitwire_core::ipc::ConnectionState;
+use splitwire_core::ipc::{Blocking, ConnectionState};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -18,8 +18,11 @@ pub struct Tray {
     toggle: MenuItem<Wry>,
     quit: MenuItem<Wry>,
     /// What the tray currently shows, to skip redundant updates.
-    shown: Option<(Option<ConnectionState>, Option<String>, Option<String>)>,
+    shown: Option<Shown>,
 }
+
+/// (state, what's blocked, connected tunnel, tunnel the toggle connects)
+type Shown = (Option<ConnectionState>, Option<Blocking>, Option<String>, Option<String>);
 
 pub fn create(app: &AppHandle) -> tauri::Result<Tray> {
     let open = MenuItem::with_id(app, "open", "Open Splitwire", true, None::<&str>)?;
@@ -56,6 +59,7 @@ impl Tray {
     pub fn update(&mut self, app: &AppHandle, status: &ServiceStatus) {
         let engine = status.engine();
         let state = engine.map(|e| e.state);
+        let blocking = engine.map(|e| e.blocking);
         let active_name = engine.and_then(|e| e.tunnel_name.clone());
         let app_state = app.state::<AppState>();
         let last_name = {
@@ -68,7 +72,7 @@ impl Tray {
                 .or(store.tunnels.first())
                 .map(|t| t.name.clone())
         };
-        let key = (state, active_name.clone(), last_name.clone());
+        let key = (state, blocking, active_name.clone(), last_name.clone());
         if self.shown.as_ref() == Some(&key) {
             return;
         }
@@ -78,23 +82,33 @@ impl Tray {
             Some(name) => format!("{prefix} {name}"),
             None => prefix.to_string(),
         };
-        let (label, toggle, toggle_enabled, on) = match (status, state) {
-            (ServiceStatus::NotInstalled, _) => ("Service not installed".to_string(), "Connect".to_string(), false, false),
-            (ServiceStatus::Stopped, _) => ("Service stopped".to_string(), "Connect".to_string(), false, false),
-            (ServiceStatus::Unreachable { .. }, _) => ("Service not responding".to_string(), "Connect".to_string(), false, false),
-            (_, Some(ConnectionState::Connected)) => (named("Connected to"), "Disconnect".to_string(), true, true),
-            (_, Some(ConnectionState::Connecting)) => (named("Connecting to"), "Disconnect".to_string(), true, true),
-            (_, Some(ConnectionState::Disconnecting)) => ("Disconnecting…".to_string(), "Disconnect".to_string(), false, false),
-            (_, Some(ConnectionState::Failed)) => (named("Couldn't connect to"), connect_label(&last_name), last_name.is_some(), false),
-            _ => ("Disconnected".to_string(), connect_label(&last_name), last_name.is_some(), false),
+        let disconnect = || "Disconnect".to_string();
+        // (status line, toggle label, toggle enabled, lit icon, a tunnel is wanted)
+        let (label, toggle, toggle_enabled, lit, wanted) = match (status, state) {
+            (ServiceStatus::NotInstalled, _) => ("Service not installed".to_string(), "Connect".to_string(), false, false, false),
+            (ServiceStatus::Stopped, _) => ("Service stopped".to_string(), "Connect".to_string(), false, false, false),
+            (ServiceStatus::Unreachable { .. }, _) => ("Service not responding".to_string(), "Connect".to_string(), false, false, false),
+            (_, Some(ConnectionState::Connected)) => (named("Connected to"), disconnect(), true, true, true),
+            (_, Some(ConnectionState::Connecting)) => (named("Connecting to"), disconnect(), true, true, true),
+            (_, Some(ConnectionState::Reconnecting)) => {
+                let label = match blocking {
+                    Some(Blocking::All) => format!("{} (blocking all traffic)", named("Reconnecting to")),
+                    Some(Blocking::Apps) => format!("{} (blocking its apps)", named("Reconnecting to")),
+                    _ => named("Reconnecting to"),
+                };
+                (label, disconnect(), true, false, true)
+            }
+            (_, Some(ConnectionState::Disconnecting)) => ("Disconnecting…".to_string(), disconnect(), false, false, false),
+            (_, Some(ConnectionState::Failed)) => (named("Couldn't connect to"), connect_label(&last_name), last_name.is_some(), false, false),
+            _ => ("Disconnected".to_string(), connect_label(&last_name), last_name.is_some(), false, false),
         };
 
         let _ = self.status.set_text(&label);
         let _ = self.toggle.set_text(&toggle);
         let _ = self.toggle.set_enabled(toggle_enabled);
-        let _ = self.quit.set_text(if on { "Disconnect and quit" } else { "Quit" });
+        let _ = self.quit.set_text(if wanted { "Disconnect and quit" } else { "Quit" });
         let _ = self.icon.set_tooltip(Some(format!("Splitwire · {label}")));
-        if let Ok(image) = Image::from_bytes(if on { ICON_ON } else { ICON_OFF }) {
+        if let Ok(image) = Image::from_bytes(if lit { ICON_ON } else { ICON_OFF }) {
             let _ = self.icon.set_icon(Some(image));
         }
     }

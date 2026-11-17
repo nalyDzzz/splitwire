@@ -134,6 +134,40 @@ export function RoutingEditor({ tunnel }: { tunnel: Tunnel }) {
       </Section>
 
       <Section
+        title="Kill switch"
+        description="Splitwire always reconnects a dropped tunnel by itself. This decides what happens until it's back."
+      >
+        <div className="flex items-center justify-between gap-6 rounded-xl border border-rule bg-plate px-4 py-3">
+          <div>
+            <p className="text-[13px] font-medium">
+              {routing.appMode === "all" ? "Block apps while the tunnel is down" : "Block these apps while the tunnel is down"}
+            </p>
+            <p className="mt-0.5 text-xs text-ink-3">
+              {routing.killSwitch
+                ? routing.appMode === "all"
+                  ? "Only Always direct apps can connect until the tunnel is back."
+                  : "The apps above can't connect until the tunnel is back. Other apps keep working."
+                : routing.appMode === "all"
+                  ? "Off: apps use your normal connection until the tunnel is back."
+                  : "Off: the apps above use your normal connection until the tunnel is back."}
+            </p>
+            {routing.killSwitch && (
+              <p className="mt-1.5 text-xs text-ink-3">
+                For the second or two the engine takes to restart, all traffic is blocked.
+                {routing.dnsMode === "tunnel" && tunnel.interface.dns.length > 0 &&
+                  " DNS lookups are blocked too, since this tunnel sends them through the tunnel."}
+              </p>
+            )}
+          </div>
+          <Switch
+            label="Kill switch"
+            checked={routing.killSwitch}
+            onChange={(killSwitch) => update((r) => ({ ...r, killSwitch }))}
+          />
+        </div>
+      </Section>
+
+      <Section
         title="DNS"
         description="Windows looks up names for every app in one place, so this applies to all apps, not only tunneled ones."
       >

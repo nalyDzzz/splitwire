@@ -46,7 +46,7 @@ export function TitleBar() {
         >
           <Lamp
             tone={engine.state === "failed" ? "signal" : "lamp"}
-            pulse={engine.state === "connecting" || engine.state === "disconnecting"}
+            pulse={engine.state === "connecting" || engine.state === "disconnecting" || engine.state === "reconnecting"}
           />
           <span className="font-medium text-ink">{engine.tunnelName}</span>
           {live && (
@@ -55,6 +55,11 @@ export function TitleBar() {
             </span>
           )}
           {engine.state === "connecting" && <span className="text-ink-3">connecting</span>}
+          {engine.state === "reconnecting" && (
+            <span className="text-ink-3">
+              reconnecting{engine.blocking !== "off" && <span className="text-signal"> · blocking</span>}
+            </span>
+          )}
           {engine.state === "failed" && <span className="text-signal">couldn't connect</span>}
         </div>
       )}

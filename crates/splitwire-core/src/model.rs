@@ -64,6 +64,9 @@ pub struct Routing {
     /// Destinations that never use the tunnel.
     pub bypass_ips: Vec<IpNet>,
     pub dns_mode: DnsMode,
+    /// While the tunnel is down and the service is bringing it back, block
+    /// the traffic that would have used it instead of letting it go direct.
+    pub kill_switch: bool,
 }
 
 impl Default for Routing {
@@ -74,6 +77,7 @@ impl Default for Routing {
             bypass_apps: Vec::new(),
             bypass_ips: Vec::new(),
             dns_mode: DnsMode::System,
+            kill_switch: false,
         }
     }
 }

@@ -15,6 +15,7 @@ mod clash;
 #[cfg(test)]
 mod e2e_tests;
 mod engine;
+mod firewall;
 mod logs;
 mod paths;
 mod pipe;

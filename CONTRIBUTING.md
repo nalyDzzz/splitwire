@@ -26,6 +26,7 @@ URL switches:
 - `?connect=work` connects on load.
 - `?health=failing` shows a tunnel that's up but passing no traffic.
 - `?update` offers a newer release; `?update=fail` makes installing it fail.
+- `?drop` drops the tunnel a few seconds after it connects, so you can see reconnecting. `home` has the kill switch on; `work` doesn't. `splitwireMock.drop()` in the console drops it on demand.
 - Connecting to `lab` always fails, so you can see the error state.
 
 ### Running the real thing
@@ -59,7 +60,7 @@ pnpm test              # Rust tests, including a real WireGuard handshake end to
 pnpm check             # clippy + TypeScript
 ```
 
-CI runs the same checks. If you change how the engine config is generated, add a case to `sing_box_accepts_generated_configs` in `crates/splitwire-core/src/singbox.rs`. It runs every generated config through the real `sing-box check`.
+CI runs the same checks. The kill switch's firewall test needs an elevated terminal, so it's skipped by default. Run it with `cargo test -p splitwire-service -- --ignored wfp`; while it runs (about 3 seconds), new connections from every app are blocked. If you change how the engine config is generated, add a case to `sing_box_accepts_generated_configs` in `crates/splitwire-core/src/singbox.rs`. It runs every generated config through the real `sing-box check`.
 
 ## Releasing
 

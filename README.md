@@ -33,6 +33,7 @@ It's free and open source, a replacement for tools like TunnlTo.
   - Live upload and download per route.
   - A live connection list showing which app went where.
   - A health check that proves traffic actually gets through the tunnel, not just that it's "connected".
+- **Stays connected.** If the tunnel drops, Splitwire brings it back on its own. With the kill switch on, the tunnel's apps are blocked until it's back instead of falling back to your normal connection.
 - **Imports your existing configs.** Standard WireGuard `.conf` files, plus TunnlTo/WireSock `AllowedApps`, `DisallowedApps` and `DisallowedIPs`.
 - **Lives in the tray.** Connect, disconnect, launch at login, and auto-connect.
 - **Updates itself.** When a new release is out, an update button appears; one click installs it and reconnects your tunnel. Updates are signed and verified before they run.
@@ -94,6 +95,7 @@ Bypass always wins. If the tunnel has no IPv6 address, tunneled apps' IPv6 traff
 - **Local network traffic stays local.** Addresses on your own subnet don't go through the tunnel.
 - **Other VPN clients.** Keep other VPNs disconnected while Splitwire is connected. Having them installed is fine.
 - **The tray icon matters.** Quitting Splitwire disconnects the tunnel, so nothing keeps routing your traffic without you seeing it.
+- **The kill switch blocks everything for a moment.** While the engine itself restarts (a second or two), it blocks all traffic, not only the tunnel's apps. Disconnecting always stops it blocking.
 
 ## Privacy
 
@@ -128,10 +130,9 @@ pnpm build       # the installer
 
 ## Roadmap
 
-- OpenVPN and OpenConnect tunnels (sing-box already ships both)
-- Several tunnels at once, each with its own apps
-- Kill switch: block tunneled apps when the tunnel drops
 - Split DNS for chosen domains
+- Several tunnels at once, each with its own apps
+- OpenVPN and OpenConnect tunnels (sing-box already ships both)
 - Signed installer (no more SmartScreen warning)
 - A slimmer engine build (the stock sing-box is ~80 MB unpacked)
 

@@ -64,10 +64,16 @@ export function Sidebar() {
                 <span
                   className={clsx(
                     "engrave text-[9.5px]",
-                    active === "failed" ? "text-signal" : "text-lamp",
+                    active === "failed" || active === "reconnecting" ? "text-signal" : "text-lamp",
                   )}
                 >
-                  {active === "connected" ? "Live" : active === "failed" ? "Failed" : "···"}
+                  {active === "connected"
+                    ? "Live"
+                    : active === "failed"
+                      ? "Failed"
+                      : active === "reconnecting"
+                        ? "Down"
+                        : "···"}
                 </span>
               )}
             </button>
@@ -130,7 +136,7 @@ function UpdateChip() {
 /** A tiny two-track switch that shows whether this tunnel is live. */
 function TunnelGlyph({ state }: { state: string | null }) {
   const lit = state === "connected";
-  const setting = state === "connecting" || state === "disconnecting";
+  const setting = state === "connecting" || state === "disconnecting" || state === "reconnecting";
   const failed = state === "failed";
   return (
     <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden className="shrink-0">
